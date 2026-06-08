@@ -26,7 +26,8 @@ Optional:
   EMAIL                       ACME account email, optional
   -d, --domain DOMAIN         Domain, same as positional DOMAIN
   -e, --email EMAIL           Email, same as positional EMAIL
-  -t, --token TOKEN           Cloudflare API Token; omitted means secure hidden prompt
+  -t, --token TOKEN           Cloudflare API Token
+      --hide-token            Prompt token in hidden mode instead of visible paste
   -o, --output-dir DIR        Target cert directory (default: /etc/xboard-node/ssl)
   -n, --name NAME             Output file prefix (default: derived from domain)
   -r, --restart CMD           Command to run after cert install
@@ -40,6 +41,9 @@ Examples:
   sudo bash issue-cloudflare-cert.sh -d hklite1.apifrrgrtdd.lol \
     -e you@example.com \
     -r "systemctl restart xboard-node"
+
+  sudo bash issue-cloudflare-cert.sh hklite1.apifrrgrtdd.lol \
+    --hide-token
 
 Result files:
   /etc/xboard-node/ssl/<name>.crt
@@ -75,6 +79,67 @@ prompt_from_tty() {
   printf '%s' "$value"
 }
 
+prompt_token() {
+  local secret="${1:-0}"
+
+  if [ "$secret" -eq 1 ]; then
+    prompt_from_tty 'Enter Cloudflare API Token: ' 1
+    return
+  fi
+
+  echo "Paste your Cloudflare API Token below, then press Enter."
+  echo "The text will be visible while pasting. This is easier in many SSH clients."
+  prompt_from_tty 'Cloudflare API Token: ' 0
+}
+
+cf_api_get() {
+  local url="$1"
+  curl -sS -X GET "$url" \
+    -H "Authorization: Bearer $CF_TOKEN" \
+    -H "Content-Type: application/json"
+}
+
+discover_cf_zone() {
+  local candidate="$1"
+  local response=""
+  local zone_name=""
+
+  while [ -n "$candidate" ] && [ "$candidate" != "${candidate#*.}" ]; do
+    response="$(cf_api_get "https://api.cloudflare.com/client/v4/zones?name=${candidate}")" || return 1
+    if printf '%s' "$response" | grep -q '"success":true' && ! printf '%s' "$response" | grep -q '"result":\[\]'; then
+      zone_name="$(printf '%s' "$response" | sed -n 's/.*"name":"\([^"]*\)".*/\1/p' | head -n 1)"
+      if [ -n "$zone_name" ]; then
+        printf '%s' "$zone_name"
+        return 0
+      fi
+    fi
+    candidate="${candidate#*.}"
+  done
+
+  return 1
+}
+
+preflight_check_cloudflare() {
+  local zone_name=""
+
+  log_step "Checking Cloudflare zone access"
+  zone_name="$(discover_cf_zone "$DOMAIN")" || true
+  if [ -z "$zone_name" ]; then
+    log_error "could not find a Cloudflare zone for $DOMAIN using the provided token"
+    echo
+    echo "Common causes:"
+    echo "  1. The root domain is not hosted in this Cloudflare account"
+    echo "  2. The token lacks Zone Read + DNS Edit permissions"
+    echo "  3. You pasted the token incorrectly"
+    echo
+    echo "Expected root zone example:"
+    echo "  For hklite1.apifrrgrtdd.lol, the zone is usually apifrrgrtdd.lol"
+    exit 1
+  fi
+
+  log_info "Cloudflare zone detected: $zone_name"
+}
+
 sanitize_name() {
   local raw="$1"
   raw="${raw,,}"
@@ -91,6 +156,7 @@ OUTPUT_DIR="/etc/xboard-node/ssl"
 OUTPUT_NAME=""
 RESTART_CMD=""
 FORCE_ISSUE=0
+HIDE_TOKEN=0
 POSITIONAL=()
 
 while (($# > 0)); do
@@ -118,6 +184,10 @@ while (($# > 0)); do
     -r|--restart)
       RESTART_CMD="${2:-}"
       shift 2
+      ;;
+    --hide-token)
+      HIDE_TOKEN=1
+      shift
       ;;
     --force)
       FORCE_ISSUE=1
@@ -155,7 +225,7 @@ if [ -z "$DOMAIN" ]; then
 fi
 
 if [ -z "$CF_TOKEN" ]; then
-  CF_TOKEN="$(prompt_from_tty 'Enter Cloudflare API Token: ' 1)"
+  CF_TOKEN="$(prompt_token "$HIDE_TOKEN")"
 fi
 
 if [ "$EUID" -ne 0 ]; then
@@ -165,6 +235,8 @@ fi
 
 require_cmd bash
 require_cmd curl
+
+preflight_check_cloudflare
 
 if [ -z "$OUTPUT_NAME" ]; then
   OUTPUT_NAME="$(sanitize_name "$DOMAIN")"
