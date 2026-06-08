@@ -18,14 +18,15 @@ log_step()  { echo -e "${CYAN}[STEP]${NC} $*"; }
 usage() {
   cat <<'EOF'
 Usage:
-  sudo bash issue-cloudflare-cert.sh [-d DOMAIN] [-t CF_TOKEN] [options]
-
-Interactive if omitted:
-  -d, --domain DOMAIN         Domain to issue, e.g. hklite1.example.com
-  -t, --token TOKEN           Cloudflare API Token with Zone DNS Edit + Zone Read
+  sudo bash issue-cloudflare-cert.sh DOMAIN [EMAIL] [options]
+  sudo bash issue-cloudflare-cert.sh -d DOMAIN [-e EMAIL] [options]
 
 Optional:
-  -e, --email EMAIL           ACME account email
+  DOMAIN                      Domain to issue, e.g. hklite1.example.com
+  EMAIL                       ACME account email, optional
+  -d, --domain DOMAIN         Domain, same as positional DOMAIN
+  -e, --email EMAIL           Email, same as positional EMAIL
+  -t, --token TOKEN           Cloudflare API Token; omitted means secure hidden prompt
   -o, --output-dir DIR        Target cert directory (default: /etc/xboard-node/ssl)
   -n, --name NAME             Output file prefix (default: derived from domain)
   -r, --restart CMD           Command to run after cert install
@@ -33,9 +34,11 @@ Optional:
   -h, --help                  Show this help
 
 Examples:
-  sudo bash issue-cloudflare-cert.sh \
-    -t cfk_AFsDRpnhBLxT2v2fjCSpNozcvA3jdh2ITiOveYiv355987d4 \
-    -e xuefei659@gmail.com \
+  sudo bash issue-cloudflare-cert.sh hklite1.apifrrgrtdd.lol you@example.com \
+    -r "systemctl restart xboard-node"
+
+  sudo bash issue-cloudflare-cert.sh -d hklite1.apifrrgrtdd.lol \
+    -e you@example.com \
     -r "systemctl restart xboard-node"
 
 Result files:
@@ -88,6 +91,7 @@ OUTPUT_DIR="/etc/xboard-node/ssl"
 OUTPUT_NAME=""
 RESTART_CMD=""
 FORCE_ISSUE=0
+POSITIONAL=()
 
 while (($# > 0)); do
   case "$1" in
@@ -124,15 +128,30 @@ while (($# > 0)); do
       exit 0
       ;;
     *)
-      log_error "unknown argument: $1"
-      usage
-      exit 1
+      POSITIONAL+=("$1")
+      shift
       ;;
   esac
 done
 
+if [ ${#POSITIONAL[@]} -gt 0 ] && [ -z "$DOMAIN" ]; then
+  DOMAIN="${POSITIONAL[0]}"
+fi
+
+if [ ${#POSITIONAL[@]} -gt 1 ] && [ -z "$ACME_EMAIL" ]; then
+  ACME_EMAIL="${POSITIONAL[1]}"
+fi
+
+if [ ${#POSITIONAL[@]} -gt 2 ]; then
+  log_error "too many positional arguments"
+  usage
+  exit 1
+fi
+
 if [ -z "$DOMAIN" ]; then
-  DOMAIN="$(prompt_from_tty 'Enter domain: ')"
+  log_error "domain is required"
+  usage
+  exit 1
 fi
 
 if [ -z "$CF_TOKEN" ]; then
