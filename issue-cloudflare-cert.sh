@@ -18,9 +18,9 @@ log_step()  { echo -e "${CYAN}[STEP]${NC} $*"; }
 usage() {
   cat <<'EOF'
 Usage:
-  sudo bash issue-cloudflare-cert.sh -d DOMAIN -t CF_TOKEN [options]
+  sudo bash issue-cloudflare-cert.sh [-d DOMAIN] [-t CF_TOKEN] [options]
 
-Required:
+Interactive if omitted:
   -d, --domain DOMAIN         Domain to issue, e.g. hklite1.example.com
   -t, --token TOKEN           Cloudflare API Token with Zone DNS Edit + Zone Read
 
@@ -34,9 +34,8 @@ Optional:
 
 Examples:
   sudo bash issue-cloudflare-cert.sh \
-    -d hklite1.apifrrgrtdd.lol \
-    -t YOUR_CF_TOKEN \
-    -e you@example.com \
+    -t cfk_AFsDRpnhBLxT2v2fjCSpNozcvA3jdh2ITiOveYiv355987d4 \
+    -e xuefei659@gmail.com \
     -r "systemctl restart xboard-node"
 
 Result files:
@@ -51,6 +50,26 @@ require_cmd() {
     log_error "missing command: $cmd"
     exit 1
   fi
+}
+
+prompt_from_tty() {
+  local prompt_text="$1"
+  local secret="${2:-0}"
+  local value=""
+
+  if [ ! -r /dev/tty ]; then
+    log_error "missing required argument and no interactive TTY is available"
+    exit 1
+  fi
+
+  if [ "$secret" -eq 1 ]; then
+    read -r -s -p "$prompt_text" value </dev/tty
+    echo >/dev/tty
+  else
+    read -r -p "$prompt_text" value </dev/tty
+  fi
+
+  printf '%s' "$value"
 }
 
 sanitize_name() {
@@ -112,10 +131,12 @@ while (($# > 0)); do
   esac
 done
 
-if [ -z "$DOMAIN" ] || [ -z "$CF_TOKEN" ]; then
-  log_error "--domain and --token are required"
-  usage
-  exit 1
+if [ -z "$DOMAIN" ]; then
+  DOMAIN="$(prompt_from_tty 'Enter domain: ')"
+fi
+
+if [ -z "$CF_TOKEN" ]; then
+  CF_TOKEN="$(prompt_from_tty 'Enter Cloudflare API Token: ' 1)"
 fi
 
 if [ "$EUID" -ne 0 ]; then
