@@ -94,7 +94,7 @@ prompt_token() {
 
 cf_api_get() {
   local url="$1"
-  curl -sS -X GET "$url" \
+  curl --http1.1 -sS -X GET "$url" \
     -H "Authorization: Bearer $CF_TOKEN" \
     -H "Content-Type: application/json"
 }
